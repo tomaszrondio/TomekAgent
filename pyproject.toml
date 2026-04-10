@@ -1,0 +1,18 @@
+[project]
+name = "tomek-agent"
+version = "0.1.0"
+description = "Slack bot with LangChain Deep Agents integration"
+requires-python = ">=3.12"
+dependencies = [
+    "slack-bolt>=1.21.0",
+    "slack-sdk>=3.33.0",
+    "pydantic-settings>=2.7.0",
+    "structlog>=24.4.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.8.0",
+]
