@@ -10,8 +10,8 @@ def register_listeners(app: App) -> None:
     def handle_mention(event: dict, say) -> None:
         user_id = event.get("user", "unknown")
         channel = event.get("channel", "")
-        thread_ts = event.get("thread_ts") or event.get("ts")
+        thread_ts = event.get("thread_ts")  # None if mention is at channel level
 
-        logger.info("mention_received", user=user_id, channel=channel)
+        logger.info("mention_received", user=user_id, channel=channel, in_thread=thread_ts is not None)
 
         say(f"<@{user_id}> Hej! Jestem TomekAgent. Integracja z AI juz wkrotce.", thread_ts=thread_ts)
