@@ -1,51 +1,86 @@
 # TomekAgent — Postepy projektu
 
-## Status: Faza 1 MVP — gotowa do testow
+## Status: Faza 2 zaimplementowana — wymaga OPENROUTER_API_KEY do testow
 
 ### Co jest zrobione
 
-**Faza 1: Slack Bot MVP (Socket Mode)**
-- [x] Struktura projektu (src/tomek_agent/, tests/, docs/)
-- [x] `config.py` — Pydantic Settings (SLACK_BOT_TOKEN, SLACK_APP_TOKEN, LOG_LEVEL, HEALTH_PORT)
-- [x] `bot/app.py` — fabryka slack_bolt App
-- [x] `bot/listeners.py` — handlery @mention (ping, help, echo) + /tomek slash command
-- [x] `main.py` — entrypoint: structlog, health server (:3000), SocketModeHandler, graceful shutdown
-- [x] `Dockerfile` — multi-stage build (uv + python:3.12-slim)
-- [x] `docker-compose.yml` — env_file, restart: unless-stopped, healthcheck
-- [x] PRD Phase 1 (`docs/PRD_PHASE1_MVP.md`)
-- [x] PRD Phase 2 (`docs/PRD_PHASE2_DEEP_AGENTS.md`)
+**Faza 1: Slack Bot MVP (Socket Mode)** ✅
+- [x] Socket Mode (WebSocket, brak publicznego IP)
+- [x] @mention handler — reaguje tylko w kanałach, zero DM
+- [x] Odpowiada na tym samym poziomie co mention (kanał lub wątek)
+- [x] Health check endpoint (:3000)
+- [x] Structured JSON logging
+- [x] Graceful shutdown
+- [x] Docker + docker-compose
 
-### Co trzeba przetestowac (Faza 1)
+**Faza 2: Deep Agents Integration** ✅
+- [x] `AsyncApp` + `AsyncSocketModeHandler` (async, non-blocking)
+- [x] `create_deep_agent` z OpenRouter LLM (claude-sonnet-4-20250514)
+- [x] Wbudowane middleware: TodoListMiddleware, FilesystemMiddleware, SummarizationMiddleware
+- [x] Thread = Session (Slack thread_ts → LangGraph thread_id)
+- [x] Thinking indicator ("Myślę..." → aktualizacja z odpowiedzią)
+- [x] SQLite checkpointer — persistence rozmów (Docker volume `/app/data`)
+- [x] InMemoryStore — cross-session memory agenta
+- [x] Rate limiting per user (in-memory, daily reset)
+- [x] Error handling z przyjaznym komunikatem
+- [x] Custom tool: `get_current_time`
 
-1. Skonfigurowac Slack App wg `docs/PRD_PHASE1_MVP.md` sekcja 9
-2. Skopiowac `.env.example` -> `.env`, uzupelnic tokeny
-3. `docker compose up -d` — sprawdzic czy kontener startuje
-4. `@TomekAgent ping` — powinno odpowiedziec "pong! Uptime: Xs"
-5. `@TomekAgent help` — lista komend
-6. `@TomekAgent echo test` — powtorzy "test"
-7. `/tomek` — menu pomocy
-8. `curl http://localhost:3000/health` — powinno zwrocic 200
-9. `docker compose restart bot` — bot reconnectuje
+### Co trzeba zrobic przed uruchomieniem
 
-### Co zostalo do zrobienia
+1. Dodać `OPENROUTER_API_KEY=sk-or-v1-...` do pliku `.env`
+   - Załóż konto na https://openrouter.ai, Keys → Create Key
+   - Dodaj credits (~$5 na start)
 
-**Faza 2: Deep Agents Integration (nie rozpoczeta)**
-- [ ] Konto OpenRouter + API key
-- [ ] `agent/factory.py` — create_deep_agent wrapper z OpenRouter LLM
-- [ ] `agent/session.py` — mapowanie thread_ts -> thread_id
-- [ ] `agent/tools.py` — custom tools (get_current_time, web_search)
-- [ ] `agent/prompts.py` — system prompts
-- [ ] `storage/persistence.py` — SQLite checkpointer + store
-- [ ] Migracja na AsyncApp + AsyncSocketModeHandler
-- [ ] Refactor listeners.py — agent invocation zamiast canned responses
-- [ ] Docker volume dla persistence
-- [ ] Rate limiting per user
-- [ ] Testy
+2. Uruchomić lokalnie:
+   ```
+   PYTHONPATH=src python -m tomek_agent.main
+   ```
+   (lub `docker compose up -d` na serwerze)
 
-### Decyzje projektowe
+### Jak testowac
 
-- **LLM Provider**: OpenRouter (kompatybilny z OpenAI SDK, base_url: openrouter.ai/api/v1)
-- **Model domyslny**: anthropic/claude-sonnet-4-20250514
-- **Bot reaguje TYLKO na @mentions** w kanalach — zero DM
-- **Hosting**: lokalny serwer Linux, Docker, brak publicznego IP (Socket Mode)
-- **Zespol**: 2-10 osob
+1. `@TomekAgent Jaka jest stolica Francji?`
+   → Bot postuje "Myślę...", po chwili aktualizuje z odpowiedzią AI
+2. Follow-up w tym samym wątku: "A jaka jest populacja?"
+   → Bot pamięta kontekst (wie, że chodzi o Francję)
+3. Restart bota → wznów wątek
+   → Kontekst odtworzony z SQLite (checkpoints.db)
+4. `@TomekAgent która jest godzina?`
+   → Używa narzędzia `get_current_time`
+5. Złożone zadanie: "Zaplanuj mi roadmapę dla projektu X"
+   → Agent użyje `write_todos` do planowania
+
+### Struktura plików
+
+```
+src/tomek_agent/
+├── main.py              # async entrypoint
+├── config.py            # Settings (Slack + OpenRouter + storage)
+├── bot/
+│   ├── app.py           # AsyncApp factory
+│   └── listeners.py     # @mention → agent pipeline + rate limiting
+├── agent/
+│   ├── factory.py       # create_deep_agent + OpenRouter LLM
+│   ├── session.py       # thread_ts → thread_id mapping
+│   ├── tools.py         # custom tools (get_current_time)
+│   └── prompts.py       # system prompt
+└── storage/
+    └── persistence.py   # AsyncSqliteSaver + InMemoryStore
+```
+
+### Kluczowe decyzje projektowe
+
+- **LLM**: OpenRouter (base_url: openrouter.ai/api/v1) — kompatybilny z OpenAI SDK
+- **Model domyslny**: `anthropic/claude-sonnet-4-20250514`
+- **Bot reaguje TYLKO na @mentions** w kanałach — zero DM
+- **Checkpointing**: SQLite na Docker volume `/app/data/checkpoints.db`
+- **Memory**: InMemoryStore (ginie przy restarcie — wystarczy na start)
+- **Rate limiting**: 50 zapytań/dzień per user (in-memory, reset o północy UTC)
+- **Middleware**: deepagents domyślnie dodaje TodoList + Filesystem + Summarization
+
+### Co zostalo do zrobienia (opcjonalnie)
+
+- [ ] Persistent InMemoryStore → SQLite store (gdy memory musi przeżywać restart)
+- [ ] Dodatkowe tools (web search z Tavily, inne)
+- [ ] Testy jednostkowe
+- [ ] Upgrade Dockerfile do instalacji z uv.lock
