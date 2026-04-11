@@ -1,12 +1,13 @@
+import asyncio
 import logging
-import signal
-import sys
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 import structlog
 
 from tomek_agent.config import Settings
+from tomek_agent.storage.persistence import create_checkpointer, create_store
+from tomek_agent.agent.factory import create_agent
 from tomek_agent.bot.app import create_app
 
 
@@ -22,7 +23,7 @@ class HealthHandler(BaseHTTPRequestHandler):
             self.end_headers()
 
     def log_message(self, format, *args):
-        pass  # suppress default http logs
+        pass
 
 
 def _start_health_server(port: int) -> HTTPServer:
@@ -32,11 +33,10 @@ def _start_health_server(port: int) -> HTTPServer:
     return server
 
 
-def main() -> None:
+async def _run() -> None:
     settings = Settings()
 
     log_level = getattr(logging, settings.log_level.upper(), logging.INFO)
-
     structlog.configure(
         processors=[
             structlog.processors.TimeStamper(fmt="iso"),
@@ -45,29 +45,30 @@ def main() -> None:
         ],
         wrapper_class=structlog.make_filtering_bound_logger(log_level),
     )
-
     logger = structlog.get_logger()
-
-    app = create_app(settings)
 
     health_server = _start_health_server(settings.health_port)
     logger.info("health_server_started", port=settings.health_port)
 
-    from slack_bolt.adapter.socket_mode import SocketModeHandler
+    store = create_store()
 
-    handler = SocketModeHandler(app, settings.slack_app_token)
+    async with create_checkpointer(settings.data_dir) as checkpointer:
+        agent = create_agent(settings, checkpointer, store)
+        app = create_app(settings, agent)
 
-    def shutdown(signum, frame):
-        logger.info("shutdown_signal", signal=signum)
-        health_server.shutdown()
-        handler.close()
-        sys.exit(0)
+        from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
+        handler = AsyncSocketModeHandler(app, settings.slack_app_token)
 
-    signal.signal(signal.SIGTERM, shutdown)
-    signal.signal(signal.SIGINT, shutdown)
+        logger.info("bot_starting")
+        try:
+            await handler.start_async()
+        finally:
+            health_server.shutdown()
+            logger.info("bot_stopped")
 
-    logger.info("bot_starting")
-    handler.start()
+
+def main() -> None:
+    asyncio.run(_run())
 
 
 if __name__ == "__main__":
